@@ -1,0 +1,5 @@
+{
+  "name": "UGC Creator AI",
+  "description": "A powerful tool powered by Gemini 2.5 Flash Image to generate and edit User Generated Content (UGC) images from product photos.",
+  "requestFramePermissions": []
+}
