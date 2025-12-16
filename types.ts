@@ -5,6 +5,7 @@ export interface GenerationConfig {
   lighting: string;
   style: string;
   videoStyle: string; // New field for video motion
+  speechText: string; // New field for video narration
   customPrompt: string;
   styleReference?: UploadedImage | null;
   patternReference?: UploadedImage | null;
@@ -13,6 +14,7 @@ export interface GenerationConfig {
 export interface AtelierProfile {
   name: string;
   description: string;
+  veoApiKey?: string;
 }
 
 export interface UploadedImage {

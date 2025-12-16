@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Sparkles, 
   Download, 
@@ -13,7 +13,8 @@ import {
   Play,
   Scissors,
   Settings,
-  Camera
+  Camera,
+  Mic
 } from 'lucide-react';
 import { ImageUpload } from './components/ImageUpload';
 import { SelectInput } from './components/SelectInput';
@@ -21,7 +22,7 @@ import { Button } from './components/Button';
 import { SeasonalWidget } from './components/SeasonalWidget';
 import { SettingsModal } from './components/SettingsModal';
 import { ENVIRONMENTS, CHARACTERS, STYLES, LIGHTING, VIDEO_STYLES, GenerationConfig, UploadedImage, AtelierProfile } from './types';
-import { generateUGCImage, generateCaptions, generateVideo, refineImage } from './services/geminiService';
+import { generateUGCImage, generateCaptions, generateVideo, refineImage, generateSpeech } from './services/geminiService';
 import { getCurrentSeason } from './data/seasonalThemes';
 
 // Default profile
@@ -42,6 +43,7 @@ function App() {
     lighting: '',
     style: 'social_media', // Default to Social Media for UGC
     videoStyle: 'handheld', // Default video style
+    speechText: '', // TTS text
     customPrompt: ''
   });
 
@@ -60,6 +62,7 @@ function App() {
   
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [generatedVideo, setGeneratedVideo] = useState<string | null>(null);
+  const [generatedAudio, setGeneratedAudio] = useState<string | null>(null);
   const [refinePrompt, setRefinePrompt] = useState("");
   
   const [captions, setCaptions] = useState<string[]>([]);
@@ -67,6 +70,9 @@ function App() {
   const [videoError, setVideoError] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
   const currentSeason = getCurrentSeason();
 
   // Save profile changes
@@ -93,11 +99,29 @@ function App() {
 
     setIsGeneratingVideo(true);
     setVideoError(null);
+    setGeneratedVideo(null);
+    setGeneratedAudio(null);
+
     try {
        // Combine visual style with video movement style for the prompt
        const promptContext = `Motion Style: ${config.videoStyle.replace('_', ' ')}. Visual aesthetic: ${config.style} in ${config.environment}.`;
-       const videoUrl = await generateVideo(src, promptContext, profile);
-       setGeneratedVideo(videoUrl);
+       
+       // Run video and speech generation in parallel if text is provided
+       const promises: Promise<any>[] = [
+           generateVideo(src, promptContext, profile)
+       ];
+
+       if (config.speechText.trim()) {
+           promises.push(generateSpeech(config.speechText, profile));
+       }
+
+       const results = await Promise.all(promises);
+       setGeneratedVideo(results[0]);
+       
+       if (results[1]) {
+           setGeneratedAudio(results[1]);
+       }
+
     } catch (err: any) {
       if (err.message === "VEO_KEY_ERROR") {
          // Handle AI Studio / IDX Environment Key Selection
@@ -107,8 +131,16 @@ function App() {
                 await window.aistudio.openSelectKey();
                 // Retry immediately after selection
                 const promptContext = `Motion Style: ${config.videoStyle.replace('_', ' ')}. Visual aesthetic: ${config.style} in ${config.environment}.`;
-                const videoUrl = await generateVideo(src, promptContext, profile);
-                setGeneratedVideo(videoUrl);
+                // Retry logic same as above
+                 const promises: Promise<any>[] = [
+                    generateVideo(src, promptContext, profile)
+                ];
+                if (config.speechText.trim()) {
+                    promises.push(generateSpeech(config.speechText, profile));
+                }
+                const results = await Promise.all(promises);
+                setGeneratedVideo(results[0]);
+                if (results[1]) setGeneratedAudio(results[1]);
                 setVideoError(null);
              } catch (retryError) {
                 console.error(retryError);
@@ -137,6 +169,7 @@ function App() {
     setVideoError(null);
     setGeneratedImage(null);
     setGeneratedVideo(null);
+    setGeneratedAudio(null);
     setCaptions([]);
     setCopiedIndex(null);
     setRefinePrompt("");
@@ -205,6 +238,20 @@ function App() {
     navigator.clipboard.writeText(text);
     setCopiedIndex(index);
     setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
+  // Sync video play/pause with audio
+  const onVideoPlay = () => {
+    if (audioRef.current && generatedAudio) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play();
+    }
+  };
+
+  const onVideoPause = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
   };
 
   return (
@@ -338,10 +385,11 @@ function App() {
           </section>
 
            {/* Section 5: Video Settings */}
-           <section className="bg-purple-50 p-4 rounded-xl border border-purple-100">
+           <section className="bg-purple-50 p-4 rounded-xl border border-purple-100 space-y-4">
              <h2 className="text-sm uppercase tracking-wide text-purple-800 font-semibold mb-3 flex items-center gap-2">
                 <Video className="w-4 h-4" /> 5. Configuração de Vídeo (Reels)
               </h2>
+              
               <SelectInput 
                 label="Estilo de Movimento (Câmera)" 
                 options={VIDEO_STYLES}
@@ -349,7 +397,22 @@ function App() {
                 onChange={(e) => handleConfigChange('videoStyle', e.target.value)}
                 className="bg-white"
               />
-               <div className="flex items-center gap-3 mt-3 cursor-pointer" onClick={() => setAutoGenerateVideo(!autoGenerateVideo)}>
+
+              <div>
+                <label className="block text-sm font-medium text-purple-900 mb-1 flex items-center gap-2">
+                  <Mic className="w-3 h-3" />
+                  Roteiro de Narração (Opcional)
+                </label>
+                <textarea
+                  rows={2}
+                  className="block w-full rounded-lg border-purple-200 border bg-white text-gray-900 focus:ring-purple-500 focus:border-purple-500 sm:text-sm p-2.5 resize-none placeholder-purple-300"
+                  placeholder="Escreva o texto que será falado no vídeo (TTS)..."
+                  value={config.speechText}
+                  onChange={(e) => handleConfigChange('speechText', e.target.value)}
+                />
+              </div>
+
+               <div className="flex items-center gap-3 cursor-pointer" onClick={() => setAutoGenerateVideo(!autoGenerateVideo)}>
                 <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${autoGenerateVideo ? 'bg-purple-600 border-purple-600' : 'bg-white border-purple-200'}`}>
                   {autoGenerateVideo && <Check className="w-3.5 h-3.5 text-white" />}
                 </div>
@@ -388,7 +451,7 @@ function App() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-semibold text-gray-800">Resultado UGC</h3>
                 <div className="flex gap-2">
-                  <Button variant="secondary" onClick={() => { setGeneratedImage(null); setGeneratedVideo(null); setCaptions([]); }} title="Limpar">
+                  <Button variant="secondary" onClick={() => { setGeneratedImage(null); setGeneratedVideo(null); setGeneratedAudio(null); setCaptions([]); }} title="Limpar">
                     <RefreshCw className="w-4 h-4" />
                   </Button>
                   <Button onClick={handleDownload} className="bg-gray-800 hover:bg-gray-900 text-white">
@@ -433,17 +496,29 @@ function App() {
                        <>
                          <div className="relative rounded-lg overflow-hidden bg-black aspect-[9/16] shadow-lg group border-4 border-gray-900">
                             <video 
+                              ref={videoRef}
                               src={generatedVideo} 
                               controls 
                               autoPlay 
                               loop 
                               className="w-full h-full object-cover"
+                              onPlay={onVideoPlay}
+                              onPause={onVideoPause}
                             />
                              <div className="absolute top-4 left-4 bg-purple-600/90 text-white text-xs px-2 py-1 rounded backdrop-blur-md flex items-center gap-1">
                               <Sparkles className="w-3 h-3" />
                               AI Video (Veo)
                             </div>
+                            {generatedAudio && (
+                                <div className="absolute top-4 right-4 bg-rose-600/90 text-white text-xs px-2 py-1 rounded backdrop-blur-md flex items-center gap-1">
+                                  <Mic className="w-3 h-3" />
+                                  Narração Ativa
+                                </div>
+                            )}
                          </div>
+                         {generatedAudio && (
+                             <audio ref={audioRef} src={generatedAudio} className="hidden" />
+                         )}
                          <div className="mt-4 text-center">
                             <a 
                               href={generatedVideo} 

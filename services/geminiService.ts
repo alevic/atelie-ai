@@ -1,11 +1,57 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { GenerationConfig, UploadedImage, AtelierProfile } from "../types";
 
-// Helper to get the correct API Key
-const getApiKey = () => {
-  const key = process.env.API_KEY;
-  if (!key) throw new Error("API Key não encontrada. A chave deve ser configurada via ambiente.");
-  return key;
+// Helper to get the correct API Key with priority: Profile Key > Env Key
+const getApiKey = (profile?: AtelierProfile) => {
+  // 1. Check if user provided a custom key in Settings
+  if (profile?.veoApiKey && profile.veoApiKey.trim() !== '') {
+    return profile.veoApiKey.trim();
+  }
+
+  // 2. Fallback to Environment Variable
+  const envKey = process.env.API_KEY;
+  if (envKey) return envKey;
+
+  // 3. Throw error if neither exists
+  throw new Error("API Key não encontrada. Configure nas Configurações do App ou via variável de ambiente.");
+};
+
+// Helper to convert Raw PCM to WAV for browser playback
+const pcmToWav = (pcmData: Uint8Array, sampleRate: number = 24000) => {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
+  const blockAlign = (numChannels * bitsPerSample) / 8;
+  const dataSize = pcmData.length;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  // Write WAV Header
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true); // Subchunk1Size (16 for PCM)
+  view.setUint16(20, 1, true); // AudioFormat (1 for PCM)
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Write PCM data
+  const pcmBytes = new Uint8Array(buffer, 44);
+  pcmBytes.set(pcmData);
+
+  return new Blob([buffer], { type: 'audio/wav' });
+};
+
+const writeString = (view: DataView, offset: number, string: string) => {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
 };
 
 const getSystemInstruction = (profile: AtelierProfile) => {
@@ -16,6 +62,7 @@ Your GOAL is to create images that look like authentic, high-quality content sho
 Brand Context: ${profile.description}
 
 CRITICAL RULES:
+0. **NO TEXT OUTPUT:** You are an image generation engine. Do NOT reply with conversational text like "Here is the image" or "Sure". Return ONLY the generated image data.
 1. **Aesthetics:** The image MUST look like a real photo, NOT a 3D render. Use natural depth of field, authentic textures, and "perfectly imperfect" lighting typical of top-tier influencers.
 2. **Subject:** The FIRST image provided is the PRODUCT. It must remain recognizable but blended naturally into the scene.
 3. **Pattern/Texture:** If a PATTERN image is provided, apply it realistically to the product's material, respecting folds and shadows.
@@ -38,7 +85,7 @@ const getCaptionSystemInstruction = (profile: AtelierProfile) => {
 };
 
 export const generateCaptions = async (config: GenerationConfig, profile: AtelierProfile): Promise<string[]> => {
-  const apiKey = getApiKey();
+  const apiKey = getApiKey(profile);
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `Crie 3 opções de legendas para um post UGC da marca ${profile.name}.
@@ -83,7 +130,7 @@ export const generateUGCImage = async (
   config: GenerationConfig,
   profile: AtelierProfile
 ): Promise<string> => {
-  const apiKey = getApiKey();
+  const apiKey = getApiKey(profile);
   const ai = new GoogleGenAI({ apiKey });
 
   // Prepare the prompt based on configuration
@@ -143,7 +190,7 @@ export const generateUGCImage = async (
     promptText += `\n- Specific Details: ${config.customPrompt}`;
   }
 
-  promptText += `\n\nACTION: Create the photo now.`;
+  promptText += `\n\nACTION: Create the photo now. DO NOT generate text descriptions, ONLY the image.`;
 
   // Add text prompt at the end
   parts.push({ text: promptText });
@@ -176,7 +223,8 @@ export const generateUGCImage = async (
     if (!generatedImageBase64) {
         const textOutput = response.text;
         if (textOutput) {
-            throw new Error(`The model returned text instead of an image: "${textOutput.substring(0, 100)}..."`);
+             // If we got text instead of image, allow retry by throwing specific error
+            throw new Error(`The model returned text instead of an image: "${textOutput.substring(0, 100)}..." Please try again.`);
         }
         throw new Error("No image data found in response.");
     }
@@ -194,7 +242,7 @@ export const refineImage = async (
   instruction: string,
   profile: AtelierProfile
 ): Promise<string> => {
-  const apiKey = getApiKey();
+  const apiKey = getApiKey(profile);
   const ai = new GoogleGenAI({ apiKey });
   
   const rawBase64 = imageBase64.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '');
@@ -210,11 +258,11 @@ export const refineImage = async (
                 mimeType: 'image/png'
              }
           },
-          { text: `INSTRUCTION: ${instruction}. Keep it realistic and high quality.` }
+          { text: `INSTRUCTION: ${instruction}. Keep it realistic and high quality. Output ONLY the image.` }
         ],
       },
       config: {
-        systemInstruction: `You are a professional photo editor for "${profile.name}". Edit the image as requested while maintaining the product's integrity.`,
+        systemInstruction: `You are a professional photo editor for "${profile.name}". Edit the image as requested while maintaining the product's integrity. DO NOT Output text.`,
       }
     });
 
@@ -242,7 +290,7 @@ export const generateVideo = async (
   promptContext: string, // This will now include the video style description
   profile: AtelierProfile
 ): Promise<string> => {
-  const apiKey = getApiKey();
+  const apiKey = getApiKey(profile);
   const ai = new GoogleGenAI({ apiKey });
   
   const rawBase64 = imageBase64.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '');
@@ -276,15 +324,72 @@ export const generateVideo = async (
     
     if (!videoUri) throw new Error("No video URI returned.");
 
+    // IMPORTANT: Use the resolved apiKey for fetching the video
     const response = await fetch(`${videoUri}&key=${apiKey}`);
     const blob = await response.blob();
     return URL.createObjectURL(blob);
 
   } catch (error: any) {
     console.error("Veo Video Error:", error);
-    if (error.message && (error.message.includes("404") || error.message.includes("NOT_FOUND"))) {
+    
+    // Check for 404 Not Found in various formats to trigger key selection logic
+    const errorString = error.message || error.toString();
+    const isNotFound = 
+        errorString.includes("404") || 
+        errorString.includes("NOT_FOUND") || 
+        errorString.includes("Requested entity was not found") ||
+        (error.status === 404);
+
+    if (isNotFound) {
         throw new Error("VEO_KEY_ERROR");
     }
+    
     throw new Error("Falha ao gerar o vídeo. Verifique se sua chave de API suporta o modelo Veo.");
   }
 }
+
+export const generateSpeech = async (
+  text: string, 
+  profile: AtelierProfile
+): Promise<string> => {
+  const apiKey = getApiKey(profile);
+  const ai = new GoogleGenAI({ apiKey });
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-preview-tts',
+      contents: text,
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Aoede' } // Using Aoede for a pleasant narrator voice
+          }
+        }
+      }
+    });
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    
+    if (!base64Audio) {
+      throw new Error("No audio data generated.");
+    }
+
+    // Convert Base64 string to Uint8Array
+    const binaryString = atob(base64Audio);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    // Convert Raw PCM (Gemini Default is 24kHz) to WAV Blob
+    const wavBlob = pcmToWav(bytes, 24000);
+    
+    return URL.createObjectURL(wavBlob);
+
+  } catch (error: any) {
+    console.error("TTS Error:", error);
+    throw new Error(error.message || "Failed to generate speech.");
+  }
+};

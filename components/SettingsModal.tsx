@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Store, FileText } from 'lucide-react';
+import { X, Save, Store, FileText, Key } from 'lucide-react';
 import { Button } from './Button';
 import { AtelierProfile } from '../types';
 
@@ -66,13 +66,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </label>
             <textarea
               required
-              rows={4}
+              rows={3}
               value={profile.description}
               onChange={(e) => setProfile({ ...profile, description: e.target.value })}
               className="block w-full rounded-lg border-gray-300 border bg-white text-gray-900 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5 resize-none"
               placeholder="Descreva a história da marca e como ela se comunica. Ex: Ateliê tradicional focado em 'feito à mão', tom acolhedor e familiar..."
             />
             <p className="text-xs text-gray-500 mt-1">Essa descrição será usada pela IA para criar legendas e ajustar o estilo.</p>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4 mt-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+              <Key className="w-4 h-4 text-purple-500" />
+              Veo API Key (Opcional)
+            </label>
+            <input
+              type="password"
+              value={profile.veoApiKey || ''}
+              onChange={(e) => setProfile({ ...profile, veoApiKey: e.target.value })}
+              className="block w-full rounded-lg border-gray-300 border bg-white text-gray-900 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5"
+              placeholder="Chave específica para geração de vídeo..."
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Deixe em branco para usar a chave padrão. Use apenas se a chave principal não tiver acesso ao modelo Veo.
+            </p>
           </div>
 
           <div className="pt-4 flex gap-3">
