@@ -14,7 +14,8 @@ import {
   Scissors,
   Settings,
   Camera,
-  Mic
+  Mic,
+  Lightbulb
 } from 'lucide-react';
 import { ImageUpload } from './components/ImageUpload';
 import { SelectInput } from './components/SelectInput';
@@ -22,7 +23,7 @@ import { Button } from './components/Button';
 import { SeasonalWidget } from './components/SeasonalWidget';
 import { SettingsModal } from './components/SettingsModal';
 import { ENVIRONMENTS, CHARACTERS, STYLES, LIGHTING, VIDEO_STYLES, GenerationConfig, UploadedImage, AtelierProfile } from './types';
-import { generateUGCImage, generateCaptions, generateVideo, refineImage, generateSpeech } from './services/geminiService';
+import { generateUGCImage, generateCaptions, generateVideo, refineImage, generateSpeech, suggestUGCPrompt } from './services/geminiService';
 import { getCurrentSeason } from './data/seasonalThemes';
 
 // Default profile
@@ -58,6 +59,7 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
+  const [isSuggestingPrompt, setIsSuggestingPrompt] = useState(false);
   const [autoGenerateVideo, setAutoGenerateVideo] = useState(false);
   
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
@@ -90,6 +92,25 @@ function App() {
       ...prev,
       ...themeConfig
     }));
+  };
+
+  const handleSuggestPrompt = async () => {
+    if (images.length === 0) {
+      setError("Faça upload de uma foto do produto para que a IA possa sugerir um prompt.");
+      return;
+    }
+
+    setIsSuggestingPrompt(true);
+    setError(null);
+    try {
+      // Pass both images, profile AND current config for context-aware suggestion
+      const suggested = await suggestUGCPrompt(images, profile, config);
+      handleConfigChange('customPrompt', suggested);
+    } catch (err: any) {
+      setError("Não foi possível sugerir um prompt agora.");
+    } finally {
+      setIsSuggestingPrompt(false);
+    }
   };
 
   // Refactored to accept an optional image source for auto-generation flow
@@ -371,9 +392,19 @@ function App() {
             />
 
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Instruções Adicionais (Prompt)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-gray-700">
+                  Instruções Adicionais (Prompt)
+                </label>
+                <button
+                  onClick={handleSuggestPrompt}
+                  disabled={isSuggestingPrompt || images.length === 0}
+                  className="text-xs font-semibold text-indigo-600 flex items-center gap-1 hover:text-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed bg-indigo-50 px-2 py-1 rounded-md border border-indigo-100 transition-colors"
+                >
+                  {isSuggestingPrompt ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Lightbulb className="w-3 h-3" />}
+                  {isSuggestingPrompt ? "Analisando..." : "Sugerir com IA"}
+                </button>
+              </div>
               <textarea
                 rows={3}
                 className="block w-full rounded-lg border-gray-300 border bg-white text-gray-900 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2.5 resize-none"

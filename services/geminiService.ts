@@ -1,5 +1,10 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { GenerationConfig, UploadedImage, AtelierProfile } from "../types";
+import { GenerationConfig, UploadedImage, AtelierProfile, ENVIRONMENTS, CHARACTERS, STYLES, LIGHTING } from "../types";
+
+// Helper to get labels from values for the prompt
+const getLabel = (list: {value: string, label: string}[], value: string) => {
+  return list.find(item => item.value === value)?.label || value;
+};
 
 // Helper to get the correct API Key with priority: Profile Key > Env Key
 const getApiKey = (profile?: AtelierProfile) => {
@@ -82,6 +87,47 @@ const getCaptionSystemInstruction = (profile: AtelierProfile) => {
   - Use emojis, espaçamento amigável e uma CTA (Chamada para Ação) no final.
   - O tom deve ser autêntico, como uma criadora de conteúdo falando com amigas.
   `;
+};
+
+export const suggestUGCPrompt = async (images: UploadedImage[], profile: AtelierProfile, config: GenerationConfig): Promise<string> => {
+  const apiKey = getApiKey(profile);
+  const ai = new GoogleGenAI({ apiKey });
+
+  const parts = images.map(img => ({
+    inlineData: { data: img.base64, mimeType: img.mimeType }
+  }));
+
+  const userSelections = [
+    config.environment ? `Cenário: ${getLabel(ENVIRONMENTS, config.environment)}` : '',
+    config.character !== 'none' ? `Personagem: ${getLabel(CHARACTERS, config.character)}` : '',
+    config.style ? `Estilo Visual: ${getLabel(STYLES, config.style)}` : '',
+    config.lighting ? `Iluminação: ${getLabel(LIGHTING, config.lighting)}` : '',
+  ].filter(Boolean).join(', ');
+
+  const prompt = `Analise as imagens deste produto para a marca "${profile.name}".
+  Descrição da marca: ${profile.description}
+  
+  O usuário já selecionou os seguintes parâmetros: ${userSelections || 'Nenhum parâmetro selecionado ainda'}.
+  
+  Sua tarefa é sugerir um PROMPT ADICIONAL criativo (máximo 2 frases) que complemente essas escolhas e detalhe a cena de forma ultra-realista e atraente para redes sociais (UGC).
+  
+  Foque em detalhes que as opções de menu não cobrem:
+  - Detalhes sensoriais específicos (ex: gotas de água, textura do tecido, reflexos).
+  - Ação ou momento exato (ex: sendo segurado, pousado em uma mesa de café, luz atravessando a janela).
+  - Se houver personagem, descreva brevemente a interação.
+  
+  Responda APENAS o texto do prompt sugerido em Português, sem introduções ou aspas.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: { parts: [...parts, { text: prompt }] },
+    });
+    return response.text?.trim() || "Focar na textura e na iluminação natural do produto em um cenário lifestyle.";
+  } catch (error) {
+    console.error("Suggest Prompt Error:", error);
+    return "Focar nos detalhes artesanais do produto em um ambiente acolhedor.";
+  }
 };
 
 export const generateCaptions = async (config: GenerationConfig, profile: AtelierProfile): Promise<string[]> => {
